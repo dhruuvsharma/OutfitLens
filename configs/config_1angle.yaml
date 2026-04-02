@@ -1,0 +1,13 @@
+single_angle: true
+image_size: 224
+embedding_dim: 512
+batch_size: 32
+learning_rate: 0.0003
+epochs: 50
+val_split: 0.15
+composite_count: 5000
+confidence_threshold: 0.75
+focal_loss: false
+assets_dir: data/raw/assets_1angle
+synthetic_dir: data/synthetic
+checkpoint_dir: logs

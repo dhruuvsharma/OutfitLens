@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/tmp/analysis.txt:*)",
+      "Read(//tmp/**)"
+    ]
+  }
+}
