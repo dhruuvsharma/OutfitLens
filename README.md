@@ -1,7 +1,5 @@
 # OutfitLens
 
-OutfitLens is a fully offline machine learning system that identifies individual clothing and accessory items present in a combined outfit image. Given a render of a complete NPC outfit, the system outputs which individual items are present along with a confidence score for each. All training and inference run locally — no external APIs or pretrained model weights are required.
-
 The system is built on a ResNet-34 backbone trained from scratch using PyTorch. During inference, a query image is embedded into a 512-dimensional vector space and matched against a reference database of known item embeddings using cosine similarity. A complementary supervised classifier head is also trained and can be used alongside the embedding path. Confidence scores are produced via two complementary inference paths (global full-image embedding and a 3×3 regional crop grid) whose results are merged by max-score.
 
 ---
