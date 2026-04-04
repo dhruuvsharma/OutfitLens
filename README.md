@@ -1,13 +1,5 @@
 # OutfitLens
 
-OutfitLens is a fully offline machine learning system that identifies individual clothing and accessory items present in a combined outfit image. Given a render of a complete NPC outfit, the system outputs which individual items are present along with a confidence score for each. All training and inference run locally — no external APIs or pretrained model weights are required.
-
----
-
-## Why Specialist-Per-Category?
-
-A single multi-label model must learn to distinguish hats from shirts from shoes simultaneously. Specialists divide this problem: each model only ever sees items from one category, so it learns finer-grained intra-category features without cross-category noise. Adding a new category never requires retraining existing specialists.
-
 ---
 
 ## Folder Structure
