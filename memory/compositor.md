@@ -41,3 +41,4 @@ Reads raw asset renders from the configured asset directory and generates synthe
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — specialist architecture: per-category compositing with cross-category distractors; single-label labels.json format; new public API `generate_category_dataset(config, category)` |

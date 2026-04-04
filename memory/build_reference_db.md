@@ -36,3 +36,4 @@ Reads all raw clothing item renders from the configured assets directory, embeds
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — supports `--category <name>` or `--all`; reads from `data/raw/<category>/`; saves DB to `logs/<category>/embedding_db.npz`; uses base_config.yaml + categories.yaml |

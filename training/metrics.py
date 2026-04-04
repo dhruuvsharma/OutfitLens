@@ -1,4 +1,4 @@
-"""Evaluation metrics: per-item precision/recall/F1, mAP, and confusion matrix export."""
+"""Evaluation metrics for single-label specialist training: top-1/5 accuracy, per-item recall, confusion matrix."""
 
 from __future__ import annotations
 
@@ -10,137 +10,125 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Per-item metrics
+# Accuracy
 # ---------------------------------------------------------------------------
 
-def per_item_metrics(
+def topk_accuracy(
     y_true: np.ndarray,
-    y_pred: np.ndarray,
-    threshold: float = 0.5,
-) -> Dict[str, np.ndarray]:
-    """Compute per-class precision, recall, and F1 from probability predictions.
+    logits: np.ndarray,
+    k: int = 1,
+) -> float:
+    """Compute top-k accuracy: fraction of samples where true label is in top-k predictions.
 
     Args:
-        y_true: ground-truth multi-hot array, shape (N, C), values in {0, 1}.
-        y_pred: predicted probabilities, shape (N, C), values in [0, 1].
-        threshold: decision threshold for converting probabilities to binary predictions.
-
-    Returns:
-        dict with keys 'precision', 'recall', 'f1', each an array of shape (C,).
+        y_true: integer ground-truth labels, shape (N,).
+        logits: raw model logits or scores, shape (N, C).
+        k: number of top predictions to consider.
     """
-    preds = (y_pred >= threshold).astype(np.float32)
-
-    tp = (preds * y_true).sum(axis=0)
-    fp = (preds * (1.0 - y_true)).sum(axis=0)
-    fn = ((1.0 - preds) * y_true).sum(axis=0)
-
-    precision = np.where(tp + fp > 0, tp / (tp + fp), 0.0)
-    recall = np.where(tp + fn > 0, tp / (tp + fn), 0.0)
-    f1 = np.where(precision + recall > 0, 2 * precision * recall / (precision + recall), 0.0)
-
-    return {"precision": precision, "recall": recall, "f1": f1}
+    top_k_preds = np.argsort(logits, axis=1)[:, -k:]  # (N, k)
+    correct = np.any(top_k_preds == y_true[:, np.newaxis], axis=1)
+    return float(correct.mean())
 
 
-def mean_f1(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.5) -> float:
-    """Return the macro-averaged F1 across all classes."""
-    return float(per_item_metrics(y_true, y_pred, threshold)["f1"].mean())
+def top1_accuracy(y_true: np.ndarray, logits: np.ndarray) -> float:
+    """Return top-1 accuracy over all samples."""
+    return topk_accuracy(y_true, logits, k=1)
+
+
+def top5_accuracy(y_true: np.ndarray, logits: np.ndarray) -> float:
+    """Return top-5 accuracy over all samples (capped at num_classes)."""
+    k = min(5, logits.shape[1])
+    return topk_accuracy(y_true, logits, k=k)
 
 
 # ---------------------------------------------------------------------------
-# Mean Average Precision
+# Per-item recall
 # ---------------------------------------------------------------------------
 
-def average_precision(y_true_col: np.ndarray, y_score_col: np.ndarray) -> float:
-    """Compute average precision (AP) for a single class using the step-function AUC."""
-    sorted_idx = np.argsort(y_score_col)[::-1]
-    y_true_sorted = y_true_col[sorted_idx]
+def per_item_recall_at_k(
+    y_true: np.ndarray,
+    logits: np.ndarray,
+    item_names: List[str],
+    k: int = 5,
+) -> Dict[str, float]:
+    """Compute per-item recall@k: did the correct item appear in the top-k predictions?
 
-    tp_cum = np.cumsum(y_true_sorted)
-    total_pos = y_true_col.sum()
-    if total_pos == 0:
-        return 0.0
-
-    n = len(y_true_sorted)
-    denom = np.arange(1, n + 1, dtype=np.float32)
-    precision_at_k = tp_cum / denom
-    recall_at_k = tp_cum / total_pos
-
-    # Δrecall between adjacent thresholds
-    delta_recall = np.diff(recall_at_k, prepend=0.0)
-    return float((precision_at_k * delta_recall).sum())
-
-
-def mean_average_precision(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Compute macro-averaged AP (mAP) across all classes."""
-    num_classes = y_true.shape[1]
-    aps = [average_precision(y_true[:, c], y_pred[:, c]) for c in range(num_classes)]
-    return float(np.mean(aps))
+    Returns a dict mapping item_name → recall@k value in [0, 1].
+    """
+    k = min(k, logits.shape[1])
+    top_k_preds = np.argsort(logits, axis=1)[:, -k:]  # (N, k)
+    recall: Dict[str, float] = {}
+    for cls_idx, name in enumerate(item_names):
+        mask = y_true == cls_idx
+        if mask.sum() == 0:
+            recall[name] = 0.0
+            continue
+        hit = np.any(top_k_preds[mask] == cls_idx, axis=1)
+        recall[name] = float(hit.mean())
+    return recall
 
 
 # ---------------------------------------------------------------------------
 # Confusion matrix
 # ---------------------------------------------------------------------------
 
-def binary_confusion_per_class(
-    y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.5
-) -> np.ndarray:
-    """Return a (C, 2, 2) array of per-class binary confusion matrices [[TN,FP],[FN,TP]]."""
-    preds = (y_pred >= threshold).astype(np.int32)
-    n_classes = y_true.shape[1]
-    cms = np.zeros((n_classes, 2, 2), dtype=np.int64)
-    for c in range(n_classes):
-        for true_val in (0, 1):
-            for pred_val in (0, 1):
-                mask = (y_true[:, c] == true_val) & (preds[:, c] == pred_val)
-                cms[c, true_val, pred_val] = mask.sum()
-    return cms
+def confusion_matrix(y_true: np.ndarray, logits: np.ndarray, num_classes: int) -> np.ndarray:
+    """Return a (C, C) confusion matrix where entry [i, j] = samples with true=i predicted=j."""
+    preds = np.argmax(logits, axis=1)
+    cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for t, p in zip(y_true, preds):
+        cm[int(t), int(p)] += 1
+    return cm
+
+
+def save_confusion_matrix_csv(path: Path, cm: np.ndarray, item_names: List[str]) -> None:
+    """Write a confusion matrix to CSV with row/column headers."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["true\\pred"] + item_names)
+        for i, row in enumerate(cm):
+            writer.writerow([item_names[i]] + [str(v) for v in row])
 
 
 # ---------------------------------------------------------------------------
-# CSV export helpers
+# CSV logging
 # ---------------------------------------------------------------------------
 
-def save_metrics_csv(
+def save_epoch_csv(
     path: Path,
-    item_names: List[str],
-    metrics_dict: Dict[str, np.ndarray],
     epoch: int,
-    loss: float,
+    train_loss: float,
+    val_loss: float,
+    top1: float,
+    top5: float,
 ) -> None:
-    """Append a per-item metrics row (precision, recall, F1) to a CSV log file."""
+    """Append one epoch row (loss + top-1/5 accuracy) to the training log CSV."""
     path = Path(path)
     write_header = not path.exists()
     with open(path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            header = ["epoch", "loss"] + [
-                f"{name}_{metric}"
-                for name in item_names
-                for metric in ("precision", "recall", "f1")
-            ] + ["mean_f1"]
-            writer.writerow(header)
-        row: List = [epoch, f"{loss:.6f}"]
-        for idx in range(len(item_names)):
-            row += [
-                f"{metrics_dict['precision'][idx]:.4f}",
-                f"{metrics_dict['recall'][idx]:.4f}",
-                f"{metrics_dict['f1'][idx]:.4f}",
-            ]
-        row.append(f"{metrics_dict['f1'].mean():.4f}")
-        writer.writerow(row)
+            writer.writerow(["epoch", "train_loss", "val_loss", "top1_acc", "top5_acc"])
+        writer.writerow([epoch, f"{train_loss:.6f}", f"{val_loss:.6f}", f"{top1:.4f}", f"{top5:.4f}"])
 
+
+# ---------------------------------------------------------------------------
+# Convenience wrapper
+# ---------------------------------------------------------------------------
 
 def compute_and_log(
     y_true: np.ndarray,
-    y_pred: np.ndarray,
+    logits: np.ndarray,
     item_names: List[str],
     log_path: Path,
     epoch: int,
-    loss: float,
-) -> Tuple[Dict[str, np.ndarray], float]:
-    """Compute per-item metrics + mAP, log to CSV, and return results."""
-    metrics = per_item_metrics(y_true, y_pred)
-    mAP = mean_average_precision(y_true, y_pred)
-    metrics["mAP"] = np.array([mAP])
-    save_metrics_csv(log_path, item_names, metrics, epoch, loss)
-    return metrics, mAP
+    train_loss: float,
+    val_loss: float,
+) -> Tuple[float, float]:
+    """Compute top-1/5 accuracy, log to CSV, and return (top1, top5)."""
+    t1 = top1_accuracy(y_true, logits)
+    t5 = top5_accuracy(y_true, logits)
+    save_epoch_csv(log_path, epoch, train_loss, val_loss, t1, t5)
+    return t1, t5

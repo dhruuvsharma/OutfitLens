@@ -38,3 +38,4 @@ None directly (threshold can be passed as argument; default 0.5).
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — single-label metrics: top-1/top-5 accuracy, per-item recall@5, confusion matrix CSV; removed multi-label mAP/F1 functions |

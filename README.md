@@ -1,8 +1,16 @@
-# OutfitLens
+# OutfitLens v2
 
-OutfitLens is a fully offline machine learning system that identifies individual clothing and accessory items present in a combined outfit image. Given a render of a complete NPC outfit, the system outputs which individual items are present along with a confidence score for each. All training and inference run locally — no external APIs or pretrained model weights are required.
+OutfitLens is a fully offline machine learning system that identifies individual clothing and accessory items present in an outfit image using a **specialist-per-category architecture**. Each clothing category (hats, shirts, pants, shoes, etc.) has its own dedicated model trained exclusively on that category. At inference time all specialist models run on the same outfit image and each returns a ranked top-N list of candidates from its own category.
 
-The system is built on a ResNet-34 backbone trained from scratch using PyTorch. During inference, a query image is embedded into a 512-dimensional vector space and matched against a reference database of known item embeddings using cosine similarity. A complementary supervised classifier head is also trained and can be used alongside the embedding path. Confidence scores are produced via two complementary inference paths (global full-image embedding and a 3×3 regional crop grid) whose results are merged by max-score.
+This architecture deliberately prevents cross-category hallucination — a hat specialist cannot invent pants.
+
+All training and inference run locally. No external APIs or pretrained model weights are required.
+
+---
+
+## Why Specialist-Per-Category?
+
+A single multi-label model must learn to distinguish hats from shirts from shoes simultaneously. Specialists divide this problem: each model only ever sees items from one category, so it learns finer-grained intra-category features without cross-category noise. Adding a new category never requires retraining existing specialists.
 
 ---
 
@@ -10,42 +18,44 @@ The system is built on a ResNet-34 backbone trained from scratch using PyTorch. 
 
 ```
 outfitlens/
-├── CLAUDE.md                        ← instructions for Claude Code
+├── CLAUDE.md
 ├── README.md
 ├── requirements.txt
 ├── configs/
-│   ├── config_4angle.yaml           ← primary: 4-angle renders per item
-│   └── config_1angle.yaml           ← secondary: front-only renders
+│   ├── base_config.yaml         ← shared hyperparameters
+│   └── categories.yaml          ← active categories + per-category overrides
 ├── data/
-│   ├── raw/
-│   │   ├── assets_4angle/           ← drop 4-angle renders here
-│   │   └── assets_1angle/           ← drop 1-angle renders here
-│   ├── synthetic/
-│   │   ├── images/                  ← generated composite images
-│   │   └── labels.json              ← generated labels
-│   └── splits/
-│       ├── train.json
-│       └── val.json
+│   └── raw/
+│       ├── hats/                ← all hat renders go here
+│       ├── shirts/
+│       ├── pants/
+│       ├── shoes/
+│       ├── jackets/
+│       └── accessories/
 ├── models/
-│   ├── backbone.py                  ← ResNet-34 from scratch
-│   ├── embedding_db.py              ← numpy cosine DB
-│   └── classifier_head.py          ← linear multi-label head
+│   ├── backbone.py              ← ResNet-34 from scratch (512-d embeddings)
+│   ├── embedding_db.py          ← per-category numpy cosine DB
+│   └── specialist.py            ← backbone + DB = one specialist model
 ├── data_pipeline/
-│   ├── compositor.py                ← synthetic outfit generator
-│   ├── augmentation.py              ← image transforms
-│   └── dataset.py                  ← PyTorch Dataset + split builder
+│   ├── compositor.py            ← per-category synthetic compositor with distractors
+│   ├── augmentation.py          ← image transforms
+│   └── dataset.py               ← SpecialistDataset (single-label)
 ├── training/
-│   ├── train.py                     ← training loop
-│   ├── losses.py                    ← BCE + focal loss
-│   └── metrics.py                  ← F1, mAP, confusion matrix
+│   ├── train_specialist.py      ← trains one specialist + populates embedding DB
+│   ├── losses.py                ← cross-entropy + focal loss (single-label)
+│   └── metrics.py               ← top-1/5 accuracy, per-item recall, confusion matrix
 ├── inference/
-│   └── recognizer.py               ← global + regional inference
+│   ├── recognizer.py            ← loads all specialists, runs recognize()
+│   └── aggregator.py            ← confidence threshold + top-N per category
 ├── scripts/
-│   ├── build_reference_db.py        ← embed assets → save DB
-│   ├── run_training.py              ← generate data + train
-│   └── predict.py                  ← CLI prediction
-├── memory/                          ← Claude Code memory docs
-└── logs/                            ← checkpoints + training logs
+│   ├── build_reference_db.py    ← embed raw renders → save DB (--category or --all)
+│   ├── train_all.py             ← orchestrate compositor + training for all categories
+│   └── predict.py               ← CLI: python predict.py --image outfit.jpg
+├── memory/                      ← Claude Code memory docs
+└── logs/
+    ├── hats/                    ← best_model.pt, embedding_db.npz, train_log.csv
+    ├── shirts/
+    └── ...
 ```
 
 ---
@@ -56,105 +66,134 @@ outfitlens/
 pip install -r requirements.txt
 ```
 
-Python 3.9+ is recommended. All packages are CPU-compatible; a CUDA-capable GPU is used automatically if available.
+Python 3.9+ recommended. A CUDA GPU is used automatically if available.
 
 ---
 
 ## Step-by-step Usage
 
-### 1. Drop renders into `data/raw/`
+### 1. Organise renders into category folders
 
-**4-angle mode** — place files named `ItemName_front.jpg`, `ItemName_back.jpg`, `ItemName_left.jpg`, `ItemName_right.jpg` into `data/raw/assets_4angle/`.
+Place item renders into `data/raw/<category>/`. File naming convention:
 
-**1-angle mode** — place files named `ItemName_front.jpg` (or any single file per item) into `data/raw/assets_1angle/`.
+- **4-angle mode** (default): `ItemName_front.jpg`, `ItemName_back.jpg`, `ItemName_left.jpg`, `ItemName_right.jpg`
+- **1-angle mode**: `ItemName_front.jpg` or any single file per item
 
-### 2. Generate synthetic training data
+Example:
+```
+data/raw/hats/Cowboy_Hat_front.jpg
+data/raw/hats/Cowboy_Hat_back.jpg
+data/raw/shirts/Plaid_Shirt_front.jpg
+```
+
+### 2. Register categories
+
+Edit `configs/categories.yaml` to list your categories (or just ensure the folders exist — `train_all.py` auto-discovers them):
+
+```yaml
+categories:
+  - name: hats
+  - name: shirts
+  - name: accessories
+    top_n_results: 3   # optional per-category override
+```
+
+### 3. Train all specialists
 
 ```bash
-python scripts/run_training.py --config configs/config_4angle.yaml
+python scripts/train_all.py
 ```
 
-This runs the compositor first (generating 5 000 composite images by default) then launches the training loop. To skip regeneration on subsequent runs:
+This runs for each category:
+1. **Compositor** — generates 3 000 synthetic composite images (target item + cross-category distractors)
+2. **Training** — trains a ResNet-34 specialist with cross-entropy loss
+3. **DB population** — embeds all raw renders and saves `logs/<category>/embedding_db.npz`
 
+To train a single category only:
 ```bash
-python scripts/run_training.py --config configs/config_4angle.yaml --skip-composite
+python scripts/train_all.py --category hats
 ```
 
-You can also run the compositor separately:
-
-```python
-import yaml
-from data_pipeline.compositor import generate_dataset
-
-with open("configs/config_4angle.yaml") as f:
-    config = yaml.safe_load(f)
-generate_dataset(config)
-```
-
-### 3. Build the reference embedding database
-
-Run this after training completes (or after adding new items — no retraining needed):
-
+Skip regenerating composites if already built:
 ```bash
-python scripts/build_reference_db.py \
-    --config configs/config_4angle.yaml \
-    --checkpoint logs/best_model.pt
+python scripts/train_all.py --skip-composite
 ```
-
-Output: `logs/reference_db.npz`
 
 ### 4. Predict items in an outfit image
 
 ```bash
-python scripts/predict.py \
-    --image path/to/outfit.jpg \
-    --config configs/config_4angle.yaml
+python scripts/predict.py --image path/to/outfit.jpg
+```
+
+Example output:
+```
+Outfit analysis: outfit.jpg
+==================================================
+
+HATS:
+  Cowboy_Hat                      0.9412
+
+SHIRTS:
+  Plaid_Shirt                     0.9104
+
+PANTS:
+  Cargo_Pants                     0.9631
 ```
 
 Optional flags:
-- `--threshold 0.8` — override the confidence threshold
-- `--output-json results.json` — write predictions to a JSON file
-- `--checkpoint path/to/model.pt` — use a specific checkpoint
-- `--db path/to/db.npz` — use a specific reference DB
+- `--threshold 0.8` — override confidence threshold
+- `--output-json results.json` — write structured JSON output
+
+---
+
+## Adding a New Category
+
+1. Create `data/raw/<new_category>/` and add renders
+2. Add entry to `configs/categories.yaml`
+3. Run `python scripts/train_all.py --category <new_category>`
+4. No changes to existing specialists
+
+## Adding a New Item to an Existing Category
+
+1. Drop renders into `data/raw/<category>/`
+2. Run `python scripts/build_reference_db.py --category <category>`
+3. No retraining needed — the DB is updated immediately
 
 ---
 
 ## Config Reference
 
+### `configs/base_config.yaml`
+
 | Key | Default | Description |
 |-----|---------|-------------|
-| `single_angle` | `false` | Use front-only renders (`true`) or 4-angle renders (`false`) |
-| `image_size` | `224` | Input image size (square, pixels) |
+| `single_angle` | `false` | `true` = front-only; `false` = average all angle embeddings |
+| `image_size` | `224` | Input image size in pixels (square) |
 | `embedding_dim` | `512` | Embedding vector dimensionality |
 | `batch_size` | `32` | Training batch size |
 | `learning_rate` | `0.0003` | Adam learning rate |
-| `epochs` | `50` | Number of training epochs |
-| `val_split` | `0.15` | Fraction of synthetic data held out for validation |
-| `composite_count` | `5000` | Number of synthetic composite images to generate |
-| `confidence_threshold` | `0.75` | Minimum cosine similarity to report an item as detected |
-| `focal_loss` | `false` | Use focal loss instead of standard BCE |
-| `assets_dir` | `data/raw/assets_4angle` | Source folder for raw renders |
-| `synthetic_dir` | `data/synthetic` | Destination for generated images and labels |
-| `checkpoint_dir` | `logs` | Where to save checkpoints and training logs |
+| `epochs` | `60` | Training epochs per specialist |
+| `val_split` | `0.15` | Validation fraction |
+| `composite_count` | `3000` | Synthetic images generated per category |
+| `distractor_count` | `2` | Other-category items added per composite |
+| `confidence_threshold` | `0.70` | Minimum cosine score to include in output |
+| `top_n_results` | `5` | Max results returned per category |
+| `focal_loss` | `false` | Use focal cross-entropy instead of standard CE |
+| `raw_data_dir` | `data/raw` | Root folder containing category subfolders |
+| `synthetic_dir` | `data/synthetic` | Root for generated composites (one subfolder per category) |
+| `logs_dir` | `logs` | Root for checkpoints and logs (one subfolder per category) |
+
+### `configs/categories.yaml`
+
+Per-category overrides can set: `top_n_results`, `confidence_threshold`, `epochs`, `batch_size`.
 
 ---
 
 ## 4-Angle vs 1-Angle Mode
 
-Both modes share the same codebase. The only difference is the `single_angle` config flag:
+Set `single_angle` in `configs/base_config.yaml`:
 
-- **4-angle (`single_angle: false`)** — `build_reference_db.py` embeds all four renders of each item and averages the resulting vectors into a single item signature. This produces a more view-invariant embedding. Use `configs/config_4angle.yaml`.
+- **`false` (default)** — all available angle renders are embedded and averaged into one item signature. More view-invariant.
+- **`true`** — only the front-view render is used. Faster to set up when only one render per item is available.
 
-- **1-angle (`single_angle: true`)** — only the front-view render is embedded. Faster to set up; useful when only front renders are available. Use `configs/config_1angle.yaml`.
-
-The compositor always uses the front-view render as the pixel-level representative for compositing regardless of mode. Angle-averaging is an embedding-space operation, not a pixel-space one.
-
----
-
-## Adding New Items (No Retraining Required)
-
-1. Drop the new item renders into the correct `data/raw/` subfolder.
-2. Re-run `build_reference_db.py` to update the reference database.
-3. The recognizer will immediately pick up the new item on the next `predict.py` call.
-
-Retraining is only needed if the model's general feature quality needs to improve (e.g. after adding many new visual categories).
+The compositor always uses the first available render as the pixel representative. Angle-averaging is an embedding-space operation only.

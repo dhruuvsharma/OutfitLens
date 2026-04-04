@@ -1,3 +1,5 @@
+# SUPERSEDED by scripts/train_all.py (v2 specialist architecture).
+# This v1 file is kept for reference only — imports will fail against the v2 API.
 """CLI entry point: generate synthetic data and run the full training pipeline."""
 
 from __future__ import annotations

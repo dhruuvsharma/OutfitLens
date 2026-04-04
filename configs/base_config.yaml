@@ -1,0 +1,15 @@
+single_angle: false        # true = front-view only; false = average all available angle embeddings
+image_size: 224
+embedding_dim: 512
+batch_size: 32
+learning_rate: 0.0003
+epochs: 60
+val_split: 0.15
+composite_count: 3000      # synthetic images generated per category
+distractor_count: 2        # other-category items added to each composite as distractors
+confidence_threshold: 0.70
+top_n_results: 5
+focal_loss: false
+raw_data_dir: data/raw
+synthetic_dir: data/synthetic
+logs_dir: logs

@@ -35,3 +35,4 @@ User-facing CLI script for running inference on a single outfit image. Loads the
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — uses OutfitRecognizer (specialist-per-category) + Aggregator; prints per-category ranked output; uses base_config.yaml + categories.yaml |

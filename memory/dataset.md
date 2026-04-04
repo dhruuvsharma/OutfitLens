@@ -35,3 +35,4 @@ Provides the `OutfitDataset` PyTorch Dataset class that reads composite images a
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — single-label (item_index int) instead of multi-hot; `SpecialistDataset` class reads per-category labels.json list format; `build_splits` updated for list-of-dicts structure |

@@ -1,3 +1,5 @@
+# SUPERSEDED by training/train_specialist.py (v2 specialist architecture).
+# This v1 file is kept for reference only — imports will fail against the v2 API.
 """Training loop: binary cross-entropy multi-label training with periodic validation."""
 
 from __future__ import annotations

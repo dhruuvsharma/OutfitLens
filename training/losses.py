@@ -1,4 +1,4 @@
-"""Loss functions: binary cross-entropy and focal loss for multi-label item prediction."""
+"""Loss functions: cross-entropy and focal loss for single-label specialist classification."""
 
 from __future__ import annotations
 
@@ -7,48 +7,43 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class BCELoss(nn.Module):
-    """Standard binary cross-entropy loss with optional per-class positive weighting."""
+class CrossEntropyLoss(nn.Module):
+    """Standard cross-entropy loss for single-label classification."""
 
-    def __init__(self, pos_weight: torch.Tensor | None = None) -> None:
-        """Initialise BCE loss; pos_weight balances positive vs negative examples per class."""
+    def __init__(self) -> None:
+        """Initialise cross-entropy loss."""
         super().__init__()
-        self.pos_weight = pos_weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Compute mean BCE loss over the batch from raw logits and float targets in {0,1}."""
-        return F.binary_cross_entropy_with_logits(
-            logits, targets, pos_weight=self.pos_weight, reduction="mean"
-        )
+        """Compute mean cross-entropy loss from raw logits and integer class targets."""
+        return F.cross_entropy(logits, targets)
 
 
-class FocalLoss(nn.Module):
-    """Focal loss for multi-label classification, down-weighting easy negatives.
+class FocalLossCE(nn.Module):
+    """Focal loss variant of cross-entropy for single-label classification.
 
-    Focal loss: FL(p_t) = -α_t * (1 - p_t)^γ * log(p_t)
-    where p_t is the model's estimated probability for the true class.
-    γ > 0 reduces the relative loss for well-classified examples, focusing
-    training on hard, misclassified ones.
+    Focal loss: FL(p_t) = -(1 - p_t)^γ * log(p_t)
+    Reduces the contribution of easy examples, focusing training on hard ones.
+    Useful when most synthetic images are correctly classified quickly.
     """
 
-    def __init__(self, gamma: float = 2.0, alpha: float = 0.25) -> None:
-        """Initialise focal loss with modulating factor gamma and balance factor alpha."""
+    def __init__(self, gamma: float = 2.0) -> None:
+        """Initialise focal loss with modulating exponent gamma."""
         super().__init__()
         self.gamma = gamma
-        self.alpha = alpha
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Compute mean focal loss over the batch from raw logits and float targets."""
-        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
-        probs = torch.sigmoid(logits)
-        p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
-        alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
-        focal_weight = alpha_t * (1.0 - p_t) ** self.gamma
-        return (focal_weight * bce).mean()
+        """Compute mean focal loss from raw logits and integer class targets."""
+        log_probs = F.log_softmax(logits, dim=1)
+        ce = F.nll_loss(log_probs, targets, reduction="none")
+        probs = torch.exp(log_probs)
+        p_t = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        focal_weight = (1.0 - p_t) ** self.gamma
+        return (focal_weight * ce).mean()
 
 
-def build_loss(config: dict, pos_weight: torch.Tensor | None = None) -> nn.Module:
+def build_loss(config: dict) -> nn.Module:
     """Construct and return the appropriate loss module from config flags."""
     if config.get("focal_loss", False):
-        return FocalLoss(gamma=2.0, alpha=0.25)
-    return BCELoss(pos_weight=pos_weight)
+        return FocalLossCE(gamma=2.0)
+    return CrossEntropyLoss()

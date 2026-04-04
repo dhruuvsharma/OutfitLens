@@ -34,3 +34,4 @@ Provides two loss functions for training the multi-label outfit recogniser. `BCE
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — single-label cross-entropy (not BCE); `CrossEntropyLoss` replaces `BCELoss`; `FocalLossCE` is new single-label focal variant; `build_loss` factory updated |

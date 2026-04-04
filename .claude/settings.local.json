@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(/tmp/analysis.txt:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(wc:*)",
+      "Bash(grep:*)"
     ]
   }
 }

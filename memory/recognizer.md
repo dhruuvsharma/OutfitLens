@@ -42,3 +42,4 @@ Provides the `OutfitRecognizer` class that identifies which clothing items appea
 | Date | Change |
 |------|--------|
 | 2026-04-03 | Initial creation |
+| 2026-04-05 | v2 rewrite — specialist-per-category architecture; loads all Specialist models from categories.yaml; `recognize(image_path)` runs all specialists and returns per-category ranked lists; removed global+regional grid inference paths |

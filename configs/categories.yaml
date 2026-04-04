@@ -1,0 +1,11 @@
+# Auto-discovered from data/raw/ subfolders.
+# Add per-category overrides here if needed.
+# Override keys: top_n_results, confidence_threshold, epochs, batch_size
+categories:
+  - name: hats
+  - name: shirts
+  - name: pants
+  - name: shoes
+  - name: jackets
+  - name: accessories
+    top_n_results: 3       # accessories returns fewer candidates
